@@ -1,8 +1,9 @@
 import joblib
-from sklearn.preprocessing import LabelEncoder
+from sklearn.calibration import LabelEncoder
 import streamlit as st
 import pandas as pd
 import numpy as np
+from PIL import Image
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -14,17 +15,17 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Load model and encoders
+# Load model and preprocessing objects
 @st.cache_resource
 def load_artifacts():
     model = joblib.load('model/model_rf.pkl')
-    encoder_dict = joblib.load('model/label_encoder.pkl')
+    encoder = joblib.load('model/label_encoder.pkl')  # This is a single LabelEncoder
     features = joblib.load('model/features.pkl')
-    return model, encoder_dict, features
+    return model, encoder, features
 
-model, encoder_dict, features = load_artifacts()
+model, encoder, features = load_artifacts()
 
-# List of categorical columns
+# List of categorical columns that need encoding
 CATEGORICAL_COLS = [
     'school', 'sex', 'address', 'famsize', 'Pstatus', 'Mjob', 'Fjob',
     'reason', 'guardian', 'schoolsup', 'famsup', 'paid', 'activities',
@@ -42,6 +43,7 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.header("📊 Informasi Demografik")
+    # Input untuk fitur demografik
     school = st.selectbox("Sekolah", ['GP', 'MS'])
     sex = st.selectbox("Jenis Kelamin", ['F', 'M'])
     age = st.slider("Usia", 15, 22, 17)
@@ -57,6 +59,7 @@ with col1:
 
 with col2:
     st.header("📚 Informasi Akademik & Lainnya")
+    # Input untuk fitur akademik
     failures = st.slider("Jumlah Nilai Gagal", 0, 4, 0)
     schoolsup = st.selectbox("Dukungan Pendidikan Tambahan", ['yes', 'no'])
     famsup = st.selectbox("Dukungan Keluarga", ['yes', 'no'])
@@ -78,51 +81,81 @@ with col2:
 
 # Tombol prediksi
 if st.button('🚀 Prediksi Kelulusan'):
+    # Membuat dataframe dari input
     input_data = {
-        'school': school, 'sex': sex, 'age': age, 'address': address, 'famsize': famsize, 'Pstatus': Pstatus,
-        'Medu': Medu, 'Fedu': Fedu, 'Mjob': Mjob, 'Fjob': Fjob, 'reason': reason, 'guardian': guardian,
-        'traveltime': traveltime, 'studytime': studytime, 'failures': failures, 'schoolsup': schoolsup,
-        'famsup': famsup, 'paid': paid, 'activities': activities, 'nursery': nursery, 'higher': higher,
-        'internet': internet, 'romantic': romantic, 'famrel': 4, 'freetime': freetime, 'goout': goout,
-        'Dalc': Dalc, 'Walc': Walc, 'health': health, 'absences': absences, 'subject': subject
+        'school': school,
+        'sex': sex,
+        'age': age,
+        'address': address,
+        'famsize': famsize,
+        'Pstatus': Pstatus,
+        'Medu': Medu,
+        'Fedu': Fedu,
+        'Mjob': Mjob,
+        'Fjob': Fjob,
+        'reason': reason,
+        'guardian': guardian,
+        'traveltime': traveltime,
+        'studytime': studytime,
+        'failures': failures,
+        'schoolsup': schoolsup,
+        'famsup': famsup,
+        'paid': paid,
+        'activities': activities,
+        'nursery': nursery,
+        'higher': higher,
+        'internet': internet,
+        'romantic': romantic,
+        'famrel': 4,  # Default value
+        'freetime': freetime,
+        'goout': goout,
+        'Dalc': Dalc,
+        'Walc': Walc,
+        'health': health,
+        'absences': absences,
+        'subject': subject
     }
-
+    
     df_input = pd.DataFrame([input_data])
-
+    
     # Encode categorical features
     for col in CATEGORICAL_COLS:
-        if col in df_input.columns and col in encoder_dict:
+        if col in df_input.columns:
+            # Create a temporary encoder for this column
+            temp_encoder = LabelEncoder()
+            temp_encoder.classes_ = encoder.classes_  # Use the same classes as original encoder
             try:
-                df_input[col] = encoder_dict[col].transform(df_input[col])
+                df_input[col] = temp_encoder.transform(df_input[col])
             except ValueError:
-                # Handle unseen labels
-                df_input[col] = [encoder_dict[col].classes_.tolist().index(encoder_dict[col].classes_[0])]
-
-
-    # Pastikan semua fitur tersedia
-    for col in features:
-        if col not in df_input.columns:
-            df_input[col] = 0
-
+                # Handle unseen labels by mapping to default (first class)
+                df_input[col] = 0
+    
+    # Pastikan urutan kolom sesuai dengan model
+    missing_cols = set(features) - set(df_input.columns)
+    for col in missing_cols:
+        df_input[col] = 0  # Add missing columns with default value
+    
     df_input = df_input[features]
-
+    
     # Prediksi
     prediction = model.predict(df_input)
     proba = model.predict_proba(df_input)
-
+    
     # Tampilkan hasil
     st.subheader("🎯 Hasil Prediksi")
+    
     col_result1, col_result2 = st.columns(2)
-
+    
     with col_result1:
         if prediction[0] == 1:
-            st.success("**LULUS** (Nilai ≥ 10)")
+            st.success(f"**LULUS** (Nilai ≥ 10)")
             st.metric("Probabilitas", f"{proba[0][1]*100:.2f}%")
         else:
-            st.error("**TIDAK LULUS** (Nilai < 10)")
+            st.error(f"**TIDAK LULUS** (Nilai < 10)")
             st.metric("Probabilitas", f"{proba[0][0]*100:.2f}%")
-
+    
     with col_result2:
+        # Visualisasi probabilitas
         fig, ax = plt.subplots(figsize=(6, 4))
         ax.bar(['Tidak Lulus', 'Lulus'], proba[0], color=['#ff6b6b', '#51cf66'])
         ax.set_ylabel('Probabilitas')
@@ -130,33 +163,43 @@ if st.button('🚀 Prediksi Kelulusan'):
         ax.set_title('Probabilitas Prediksi Kelulusan')
         st.pyplot(fig, use_container_width=True)
 
-# Feature importance
+# Tambahkan visualisasi feature importance
 if st.checkbox('📈 Tampilkan Feature Importance'):
     st.subheader("Feature Importance dari Model")
-
+    
     feature_importance = pd.DataFrame({
         'Feature': features,
         'Importance': model.feature_importances_
     }).sort_values('Importance', ascending=False)
-
+    
+    # Translate feature names for better understanding
     feature_translation = {
-        'subject': 'Mata Pelajaran', 'absences': 'Ketidakhadiran',
-        'higher': 'Rencana Kuliah', 'Medu': 'Pendidikan Ibu',
-        'reason': 'Alasan Pilih Sekolah', 'failures': 'Nilai Gagal',
-        'Fedu': 'Pendidikan Ayah', 'studytime': 'Waktu Belajar',
-        'goout': 'Frekuensi Keluar', 'Mjob': 'Pekerjaan Ibu'
+        'subject': 'Mata Pelajaran',
+        'absences': 'Ketidakhadiran',
+        'higher': 'Rencana Kuliah',
+        'Medu': 'Pendidikan Ibu',
+        'reason': 'Alasan Pilih Sekolah',
+        'failures': 'Nilai Gagal',
+        'Fedu': 'Pendidikan Ayah',
+        'studytime': 'Waktu Belajar',
+        'goout': 'Frekuensi Keluar',
+        'Mjob': 'Pekerjaan Ibu'
     }
-
-    feature_importance['Feature'] = feature_importance['Feature'].map(lambda x: feature_translation.get(x, x))
-
+    
+    feature_importance['Feature'] = feature_importance['Feature'].map(
+        lambda x: feature_translation.get(x, x)
+    )
+    
     fig, ax = plt.subplots(figsize=(10, 6))
-    sns.barplot(x='Importance', y='Feature', data=feature_importance.head(10), palette='viridis', ax=ax)
-    ax.set_title('10 Fitur Paling Penting untuk Prediksi')
+    sns.barplot(x='Importance', y='Feature', 
+                data=feature_importance.head(10), 
+                palette='viridis', ax=ax)
+    ax.set_title('10 Fitur Paling Pentik untuk Prediksi')
     ax.set_xlabel('Tingkat Kepentingan')
     ax.set_ylabel('Fitur')
     st.pyplot(fig)
 
-# Sidebar
+# Informasi tambahan di sidebar
 st.sidebar.header("Tentang Aplikasi")
 st.sidebar.info("""
 Aplikasi ini menggunakan model Random Forest yang telah dilatih untuk memprediksi kelulusan siswa berdasarkan:
@@ -167,9 +210,9 @@ Aplikasi ini menggunakan model Random Forest yang telah dilatih untuk memprediks
 """)
 
 st.sidebar.header("Parameter Model")
-st.sidebar.text(f"Jumlah Estimator: {model.n_estimators}")
-st.sidebar.text(f"Kedalaman Maksimal: {model.max_depth}")
-st.sidebar.text("Akurasi Model: ~86%")
+st.sidebar.text(f"Jumlah Estimator: 300")
+st.sidebar.text(f"Kedalaman Maksimal: Tidak Terbatas")
+st.sidebar.text(f"Akurasi Model: 86.2%")
 
 st.sidebar.header("Definisi Kelulusan")
 st.sidebar.markdown("""
